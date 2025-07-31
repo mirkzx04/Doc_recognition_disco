@@ -39,6 +39,11 @@ class StandardizationIMG:
             image (numpy.ndarray): The input image to be resized.
         """
 
+        if not isinstance(image, np.ndarray):
+            image = np.ndarray(image)
+        else:
+            ValueError('Image is not numpy array')
+
         h, w = image.shape[:2]
 
         # Calculate the scale factor to maintain aspect ratio
@@ -59,7 +64,7 @@ class StandardizationIMG:
 
         return canvas
 
-    def __call__(self, image) -> np.ndarray:
+    def standardize_image(self, image) -> np.ndarray:
         """
         Standardizes the input image by converting it to grayscale, resizing it
 

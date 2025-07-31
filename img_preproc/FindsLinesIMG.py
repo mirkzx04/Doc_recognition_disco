@@ -1,12 +1,14 @@
 import cv2
 import numpy as np
 
+from StandardizationIMG import StandardizationIMG
+
 class FindsLinesIMG:
     """
     Finds lines in an image using the Hough Transform.
     """
 
-    def __init__(self, img, low, high, kernel_size=(5, 5)): 
+    def __init__(self, low, high, kernel_size=(5, 5)): 
         """
         Initializes the FindsLinesIMG class, idenify the 3 documents in the comsposite image.
 
@@ -23,7 +25,9 @@ class FindsLinesIMG:
 
         self.kernel_size = kernel_size
 
-    def __call__(self, img: np.ndarray) -> np.ndarray:
+        self.standardizer = StandardizationIMG()
+
+    def give_tree_img(self, img: np.ndarray) -> np.ndarray:
         """
         Finds lines in the input image using the Hough Transform.
         Args:
@@ -34,6 +38,10 @@ class FindsLinesIMG:
 
         if not isinstance(img, np.ndarray):
             img = np.array(img)
+
+        # Applying image standardization in this order : 1) same dimension, 2) gray scale, 3) gaussian blur
+        img_canvas = self.standardizer.resize_keep_ratio(img)
+        img = self.standardizer.standardize_image(img_canvas)
 
         # Apply Canny edge detection to find edges in the image
         edges = cv2.Canny(img, low = self.low, high = self.high)

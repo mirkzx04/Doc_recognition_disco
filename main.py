@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 
+from img_preproc.FindsLinesIMG import FindsLinesIMG
 def load_dataset(dataset_path = './dataset_pdf_v1/images'):
     """
     Loading document image
@@ -22,13 +23,20 @@ def load_dataset(dataset_path = './dataset_pdf_v1/images'):
         
         tst += 1
 
-        if tst == 5:
-            break
+        if tst == 2:
+            return np.array(imgs)
 
     return np.array(imgs)
 
 if __name__ == "__main__":
+    print('=== LOADING IMAGE ===')
     image = load_dataset()
+    print('=== IMAGE LOADED ===')
+
+    # Add filter only for image with trhee documents, take image from JSON
+    
+    line_finder = FindsLinesIMG(low = 0.5, high=0.5)
+    page_1, page_2, page_3 = line_finder.give_tree_img(image)
     
     
 
