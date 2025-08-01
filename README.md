@@ -10,6 +10,7 @@
     - [Pulizia del dataset](#21-pulizia-del-dataset)
         - [Algoritmi](#211-algoritmi)
     - [Modello di riconoscimento](#22-modello-di-riconocimento)
+- [Training](#3-strategia-di-training)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -52,3 +53,12 @@ Questa è una lista dei possibili algoritmi che si possono applicare, in fase di
 Una volta pulito il dataset si passerà al Fine Tuning di uno dei modelli prima citati.
 
 Una volta effettuato il fine tuning si procederà con test di inferenza per verificare l'efficacia del modello
+
+## 3 Strategia di training
+
+La strategia di training sarà effettuata per far si che il modello possa comprendere al meglio la struttura dei documenti.
+
+Dopo aver effettuato la pulizia di tutte le immagini al modello verranno date le foto per fare una classificazione tramite softmax con 
+loss Cross Entropy (CE).
+Per le foto a tre documenti verrà effettuata una strategia che possa massimizzare la generalizzazione : 
+i tre documenti verranno dati spezzati, quindi invece di dare una singola foto con tutti e tre i ducmenti il modello li riceverà all'interno del batch con la stessa etichezza di classificazione, questo dovrebbe permettere al modello di generalizzare al meglio per quei tipi di documenti nello specifico.
