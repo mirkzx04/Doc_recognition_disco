@@ -1,7 +1,9 @@
 import cv2
 import numpy as np
 
-from StandardizationIMG import StandardizationIMG
+from scipy.signal import find_peaks
+
+from .StandardizationIMG import StandardizationIMG
 
 class FindsLinesIMG:
     """
@@ -27,7 +29,7 @@ class FindsLinesIMG:
 
         self.standardizer = StandardizationIMG()
 
-    def give_tree_img(self, img: np.ndarray) -> np.ndarray:
+    def find_horizontal_lines(self, img: np.ndarray) -> np.ndarray:
         """
         Finds lines in the input image using the Hough Transform.
         Args:
@@ -36,52 +38,53 @@ class FindsLinesIMG:
             numpy.ndarray: The image with detected lines drawn on it.
         """
 
-        if not isinstance(img, np.ndarray):
-            img = np.array(img)
+        # Horizontal projection (sum each lines)
+        horizontal_projection = np.sum(img, axis=1)
 
-        # Applying image standardization in this order : 1) same dimension, 2) gray scale, 3) gaussian blur
-        img_canvas = self.standardizer.resize_keep_ratio(img)
-        img = self.standardizer.standardize_image(img_canvas)
+        # Find row with low content, reverse the horizontal projection to find the lows as the peaks
+        inverted = np.max(horizontal_projection) - horizontal_projection
+        peaks, _ = find_peaks(inverted, height=np.mean(inverted) * 0.3, distance=10, prominence=np.std(inverted) * 0.3)
 
-        # Apply Canny edge detection to find edges in the image
-        edges = cv2.Canny(img, low = self.low, high = self.high)
+        return peaks
+    
+    def give_tree_img(self, image_blur):
+        if not isinstance(image_blur, np.ndarray):
+            image_blur = np.array(image_blur)
 
-        #  Dilate the edges to enhance the line detection
-        # This helps in connecting broken edges and making lines more prominent
-        kernel = np.ones(self.kernel_size, np.uint8)
-        edges = cv2.dilate(edges, kernel, iterations = 1)
+        edges = cv2.Canny(image_blur, self.low_canny, self.high_canny)
+        # Use find_horizontal_lines
+        candidate_lines = self.find_horizontal_lines(edges)
+        candidate_lines = candidate_lines.tolist()
 
-        # Use the Hough Line Transform to detect lines in the edge-detected image
-        lines = cv2.HoughLinesP(
-            edges, 
-            rho = 1, 
-            theta = np.pi / 180, 
-            threshold = 300, 
-            minLineLength = 0.6 * img.shape[0], 
-            maxLineGap = 20
-        )
-
-        candidate_lines = []
-        for x1,y1,x2,y2 in lines.reshape(-1, 4):
-            # Filter lines based on their length
-            angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
-
-            if abs(angle) < 5:
-                candidate_lines.append((y1+y2)//2)
+        print(f'Number of candidate lines : {len(candidate_lines)}')
 
         candidate_lines.sort()
         groups = []
+
         for y in candidate_lines:
             if not groups or abs(y - groups[-1][-1]) > 5:
                 groups.append([y])
             else:
                 groups[-1].append(y)
-
+        
         cut_ys = [int(np.mean(group)) for group in groups if len(group) > 1]
 
-        y0, y1, y2, y3 = 0, cut_ys[0], cut_ys[1], img.shape[1]
-        page1 = img[y0:y1]
-        page2 = img[y1:y2]
-        page3 = img[y2:y3]
+        if len(cut_ys) >= 2:
+            y0, y1, y2, y3 = 0, cut_ys[0], cut_ys[1], image_blur.shape[0]
+        elif len(cut_ys) == 1:
+            h = image_blur.shape[0]
+            y0, y1, y2, y3 = 0, cut_ys[0], h, h
+        else:
+            # Divide into trhee equal parts
+            h = image_blur.shape[0]
+            y0, y1, y2, y3 = 0, h//3, h*3//3, h
 
-        return page1, page2, page3
+        # Cut image
+        page_1 = image_blur[y0:y1]
+        page_2 =image_blur[y1:y2]
+        page_3 = image_blur[y2:y3]
+
+        return y0, y1, y2, y3
+
+
+

@@ -41,8 +41,6 @@ class StandardizationIMG:
 
         if not isinstance(image, np.ndarray):
             image = np.ndarray(image)
-        else:
-            ValueError('Image is not numpy array')
 
         h, w = image.shape[:2]
 
@@ -59,7 +57,7 @@ class StandardizationIMG:
         left, right = delta_w // 2, delta_w - (delta_w // 2)
 
         canvas = cv2.copyMakeBorder(
-            resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value = 255
+            resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value = 0
         )
 
         return canvas
