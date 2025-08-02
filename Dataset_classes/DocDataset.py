@@ -2,10 +2,11 @@ import os
 import json
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 from torch.utils.data import Dataset
 
-from img_preproc.StandardizationIMG import StandardizationIMG
+from img_preproc.CleanerIMG import CleanerIMG
 from img_preproc.FindsLinesIMG import FindsLinesIMG
 
 class DocumentDatasetTrain(Dataset):
@@ -34,7 +35,6 @@ class DocumentDatasetVal(Dataset):
 
         return images, labels
 
-
 class DocumentDataset(Dataset):
     def __init__(self, size, blur_kernel, dataset_path = r"\\10.5.1.36\dataset_IA\dataset_pdf_v1") -> None:
         """
@@ -54,7 +54,7 @@ class DocumentDataset(Dataset):
 
         self.dataset_pth = dataset_path
 
-        self.standardizer = StandardizationIMG(size, blur_kernel)
+        self.cleaner = CleanerIMG(size, blur_kernel)
         self.finder = FindsLinesIMG(low = 10, high=60)
 
         self.img_path = 'images'
@@ -91,8 +91,8 @@ class DocumentDataset(Dataset):
                     doc_type = data['tipoDocumento']
 
                     self.read_img(json_file.replace(".json", ""), doc_type)
-            except:
-                print('=== JSON NON TROVATO ===')
+            except Exception as e:
+                print(f'=== JSON NON TROVATO : {e} ===')
 
         # Standardize image
         mean = self.sum_mid / self.count
@@ -117,16 +117,25 @@ class DocumentDataset(Dataset):
         # Extract image
         img_path = os.path.join(f'{self.dataset_pth}\{self.img_path}', f'{fiscal_code}.jpg')
         img = cv2.imread(img_path)
-        print(f'Image shape : {img.shape}')
 
         if img is not None:
             # Resize image
-            resize_img = self.standardizer.resize_keep_ratio(img) 
-            print(f'Reisze image : {resize_img.shape}')           
+            resize_img = self.cleaner.resize_keep_ratio(img) 
+            gray_blur_img = self.cleaner.preproc_image(resize_img)
 
             if doc_type == '02':
                 # Take three parts of image and insert to data and its labels
-                page_1, page_2, page_3 = self.finder.give_tree_img(self.standardizer.blurrer(resize_img))
+                img_crop = self.finder.crop_document(gray_blur_img)
+                page_1, page_2, page_3 = self.finder.give_tree_img(img_crop)
+
+                plt.imshow(page_1)
+                plt.show()
+
+                plt.imshow(page_2)
+                plt.show()
+
+                plt.imshow(page_3)
+                plt.show()
 
                 self.data.extend(page_1)
                 self.data.extend(page_2)

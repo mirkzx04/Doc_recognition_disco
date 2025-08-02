@@ -3,8 +3,6 @@ import numpy as np
 
 from scipy.signal import find_peaks
 
-from .StandardizationIMG import StandardizationIMG
-
 class FindsLinesIMG:
     """
     Finds lines in an image using the Hough Transform.
@@ -38,11 +36,55 @@ class FindsLinesIMG:
 
         # Find row with low content, reverse the horizontal projection to find the lows as the peaks
         inverted = np.max(horizontal_projection) - horizontal_projection
-        peaks, _ = find_peaks(inverted, height=np.mean(inverted) * 0.03, distance=50, prominence=np.std(inverted) * 0.03)
+        peaks, _ = find_peaks(inverted, height=np.mean(inverted) * 0.03, 
+                              distance=50, prominence=np.std(inverted) * 0.03)
 
         return peaks
     
-    def give_tree_img(self, image_blur):
+    def crop_document(self, image):
+        """
+        Crops the image to the largest external contour found.
+        Args:
+            image (numpy.ndarray): Grayscale input image.
+        Returns:
+            numpy.ndarray: Cropped image or original if no contours found.
+        """
+
+        thresh = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                       cv2.THRESH_BINARY, 15, 8)
+        
+        # Find borders
+        borders, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not borders:
+            return image
+        
+        # Taked the bigger borders
+        x, y, w, h = cv2.boundingRect(max(borders, key=cv2.contourArea))
+        cropped = image[y:y+h, x:x+w]
+
+        return cropped
+    
+    def reinforce_hirozontal_lines(self, edges, kernel_size = 50):
+        """
+        Reinforces horizontal lines in a binary edge image using morphological closing.
+        This function applies a horizontal rectangular structuring element to the input edge image,
+        enhancing and connecting horizontal lines by performing a morphological closing operation.
+        Args:
+            edges (numpy.ndarray): Binary edge image (single-channel) where horizontal lines are to be reinforced.
+            kernel_size (int, optional): Length of the horizontal structuring element. Default is 50.
+        Returns:
+            numpy.ndarray: Image with reinforced horizontal lines.
+        """
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(kernel_size), 1))
+        morphed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+        return morphed
+    
+    def extract_edges(self, image):
+        return cv2.Canny(image, self.low_canny, self.high_canny)
+    
+    def give_tree_img(self, image):
         """
         Splits a blurred image into three horizontal sections based on detected horizontal lines.
         This method processes the input image to detect horizontal lines using Canny edge detection
@@ -56,18 +98,17 @@ class FindsLinesIMG:
                    of the original image (page_1, page_2, page_3).
         """
 
-        if not isinstance(image_blur, np.ndarray):
-            image_blur = np.array(image_blur)
+        if not isinstance(image, np.ndarray):
+            image = np.array(image)
 
-        edges = cv2.Canny(image_blur, self.low_canny, self.high_canny)
-        # Use find_horizontal_lines
-        candidate_lines = self.find_horizontal_lines(edges)
-        candidate_lines = candidate_lines.tolist()
+        edges = self.extract_edges(image)
+        morphed = self.reinforce_hirozontal_lines(edges)
+        peaks = self.find_horizontal_lines(morphed)
 
-        candidate_lines.sort()
+        sort_peaks = sorted(peaks)
         groups = []
 
-        for y in candidate_lines:
+        for y in sort_peaks:
             if not groups or abs(y - groups[-1][-1]) > 5:
                 groups.append([y])
             else:
@@ -76,19 +117,19 @@ class FindsLinesIMG:
         cut_ys = [int(np.mean(group)) for group in groups if len(group) > 1]
 
         if len(cut_ys) >= 2:
-            y0, y1, y2, y3 = 0, cut_ys[0], cut_ys[1], image_blur.shape[0]
+            y0, y1, y2, y3 = 0, cut_ys[0], cut_ys[1], image.shape[0]
         elif len(cut_ys) == 1:
-            h = image_blur.shape[0]
+            h = image.shape[0]
             y0, y1, y2, y3 = 0, cut_ys[0], h, h
         else:
             # Divide into trhee equal parts
-            h = image_blur.shape[0]
+            h = image.shape[0]
             y0, y1, y2, y3 = 0, h//3, h*2//3, h
 
         # Cut image
-        page_1 = image_blur[y0:y1]
-        page_2 =image_blur[y1:y2]
-        page_3 = image_blur[y2:y3]
+        page_1 = image[y0:y1]
+        page_2 =image[y1:y2]
+        page_3 = image[y2:y3]
 
         return page_1, page_2, page_3
 
