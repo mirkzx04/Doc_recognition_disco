@@ -38,6 +38,19 @@ if __name__ == "__main__":
     doc_dataset = DocumentDataset(size=(5000, 5000), blur_kernel=(4,4))
     doc_dataset.load_dataset()
 
+    # I take train dataset and validation dataset
+    len_dataset = doc_dataset.__len__()
+    train_ratio = 0.8
+    val_ratio = 0.2
+
+    num_train = int(len_dataset * train_ratio)
+    num_val = len_dataset - num_train
+    print(f'Samples number in to dataset : {len_dataset}')
+    print(f'Samples in to train set : {num_train}')
+    print(f'Samples in to validation set : {num_val}')
+
+    train_set, val_set = doc_dataset.split_dataset(num_train, num_val)
+
 
     
     

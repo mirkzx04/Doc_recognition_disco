@@ -64,8 +64,6 @@ class FindsLinesIMG:
         candidate_lines = self.find_horizontal_lines(edges)
         candidate_lines = candidate_lines.tolist()
 
-        print(f'Number of candidate lines : {len(candidate_lines)}')
-
         candidate_lines.sort()
         groups = []
 

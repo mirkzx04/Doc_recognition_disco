@@ -1,11 +1,39 @@
 import os
 import json
 import cv2
+import numpy as np
 
 from torch.utils.data import Dataset
 
 from img_preproc.StandardizationIMG import StandardizationIMG
 from img_preproc.FindsLinesIMG import FindsLinesIMG
+
+class DocumentDatasetTrain(Dataset):
+    def __init__(self, data, labels):
+        super().__init__()
+
+        self.data = data
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        images = self.data[idx]
+        labels = self.labels[idx]
+
+        return images, labels
+    
+class DocumentDatasetVal(Dataset):
+    def __init__(self, data, labels):
+        super().__init__()
+
+        self.data = data
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        images = self.data[idx]
+        labels = self.labels[idx]
+
+        return images, labels
+
 
 class DocumentDataset(Dataset):
     def __init__(self, size, blur_kernel, dataset_path = r"\\10.5.1.36\dataset_IA\dataset_pdf_v1") -> None:
@@ -22,17 +50,22 @@ class DocumentDataset(Dataset):
             img_path (str): Subdirectory name for images.
             label_path (str): Subdirectory name for labels.
         """
+        super().__init__()
 
         self.dataset_pth = dataset_path
 
         self.standardizer = StandardizationIMG(size, blur_kernel)
-        self.finder = FindsLinesIMG(low = 10, high=60, kernel_size=(5 , 5))
+        self.finder = FindsLinesIMG(low = 10, high=60)
 
         self.img_path = 'images'
         self.label_path = 'labels'
 
         self.data = []
         self.labels = []
+
+        self.sum_mid = np.zeros(3)
+        self.sum_std = np.zeros(3)
+        self.count = 0
 
     
     def load_dataset(self) -> None:
@@ -55,12 +88,20 @@ class DocumentDataset(Dataset):
                     data = json.load(file)
                     data = json.loads(data['ground_truth'])
 
-                    fiscal_code = data['CodiceFiscale']
                     doc_type = data['tipoDocumento']
 
-                    self.read_img(fiscal_code, doc_type)
+                    self.read_img(json_file.replace(".json", ""), doc_type)
             except:
                 print('=== JSON NON TROVATO ===')
+
+        # Standardize image
+        mean = self.sum_mid / self.count
+        std = np.sqrt(self.sum_std / self.count - self.mean**2)
+
+        self.data = np.ndarray(self.data, dtype=np.float32)
+        self.data = (self.data - mean) / std
+
+        self.labels = np.ndarray(self.labels, dtype=np.int32)
 
     def read_img(self, fiscal_code, doc_type):
         """
@@ -74,24 +115,71 @@ class DocumentDataset(Dataset):
         """
 
         # Extract image
-        img_path = os.path.join(f'{self.dataset_pth}\{self.img_path}', fiscal_code)
+        img_path = os.path.join(f'{self.dataset_pth}\{self.img_path}', f'{fiscal_code}.jpg')
         img = cv2.imread(img_path)
+        print(f'Image shape : {img.shape}')
 
         if img is not None:
             # Resize image
-            resize_img = self.standardizer.resize_keep_ratio(img)
+            resize_img = self.standardizer.resize_keep_ratio(img) 
+            print(f'Reisze image : {resize_img.shape}')           
 
             if doc_type == '02':
                 # Take three parts of image and insert to data and its labels
                 page_1, page_2, page_3 = self.finder.give_tree_img(self.standardizer.blurrer(resize_img))
+
                 self.data.extend(page_1)
                 self.data.extend(page_2)
                 self.data.extend(page_3)
 
-                self.labels.extend(doc_type for _ in range(0, 2))
+                self.labels.extend(doc_type for _ in range(0, 3))
+
+                self.prepare_standardization(page_1)
+                self.prepare_standardization(page_2)
+                self.prepare_standardization(page_3)
+
             else:
                 self.data.extend(resize_img)
                 self.labels.extend(doc_type)
+
+                self.prepare_standardization(resize_img)
+        else:
+            print('=== IMAGE NOT FOUND ===')
+    
+    def prepare_standardization(self, img):
+        """
+        Updates running totals required for image standardization.
+        This method accumulates the sum of pixel values and the sum of squared pixel values
+        across all images processed, as well as the total pixel count. These statistics are
+        used to compute the mean and standard deviation for dataset normalization.
+        Args:
+            img (numpy.ndarray): The input image array, expected to have shape (H, W, C),
+                where H is height, W is width, and C is the number of channels.
+        Updates:
+            self.sum_mid (numpy.ndarray): Accumulates the sum of pixel values per channel.
+            self.sum_std (numpy.ndarray): Accumulates the sum of squared pixel values per channel.
+            self.count (int): Accumulates the total number of pixels processed.
+        """
+
+        self.sum_mid += img.sum(axis=(0, 1))
+        self.sum_std += (img**2).sum(axis=(0,1))
+        self.count += img.shape[0] * img.shape[1]
+
+    def split_dataset(self, num_train, num_val):
+        train_set = DocumentDatasetTrain(self.data[:num_train], self.labels[:num_train])
+        val_set = DocumentDatasetVal(self.data[num_train+1:num_val], self.labels[num_train+1:num_val])
+
+        return train_set, val_set
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        images = self.data[idx]
+        labels = self.labels[idx]
+
+        return images, labels
+        
 
 
 
