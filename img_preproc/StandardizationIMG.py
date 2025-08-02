@@ -57,12 +57,12 @@ class StandardizationIMG:
         left, right = delta_w // 2, delta_w - (delta_w // 2)
 
         canvas = cv2.copyMakeBorder(
-            resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value = 0
+            resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value = (255, 255, 255)
         )
 
         return canvas
 
-    def standardize_image(self, image) -> np.ndarray:
+    def blurrer(self, image) -> np.ndarray:
         """
         Standardizes the input image by converting it to grayscale, resizing it
 
@@ -81,10 +81,9 @@ class StandardizationIMG:
 
         # Convert the image to grayscale and resize it
         gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        resized_image = self.resize_keep_ratio(gray_image)
 
         if self.blur:
             # Apply Gaussian blur to the resized image
-            resized_image = cv2.GaussianBlur(resized_image, self.blur_kernel, 0)
+            resized_image = cv2.GaussianBlur(gray_image, self.blur_kernel, 0)
 
         return np.expand_dims(resized_image, axis=-1)

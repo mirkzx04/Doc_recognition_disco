@@ -10,12 +10,11 @@ class FindsLinesIMG:
     Finds lines in an image using the Hough Transform.
     """
 
-    def __init__(self, low, high, kernel_size=(5, 5)): 
+    def __init__(self, low, high): 
         """
         Initializes the FindsLinesIMG class, idenify the 3 documents in the comsposite image.
 
         Args:
-            img (numpy.ndarray): The input image in which to find lines.
             low (int): The lower threshold for the Canny edge detector.
             high (int): The upper threshold for the Canny edge detector.
         Returns:
@@ -24,10 +23,6 @@ class FindsLinesIMG:
 
         self.low_canny = low
         self.high_canny = high
-
-        self.kernel_size = kernel_size
-
-        self.standardizer = StandardizationIMG()
 
     def find_horizontal_lines(self, img: np.ndarray) -> np.ndarray:
         """
@@ -43,11 +38,24 @@ class FindsLinesIMG:
 
         # Find row with low content, reverse the horizontal projection to find the lows as the peaks
         inverted = np.max(horizontal_projection) - horizontal_projection
-        peaks, _ = find_peaks(inverted, height=np.mean(inverted) * 0.3, distance=10, prominence=np.std(inverted) * 0.3)
+        peaks, _ = find_peaks(inverted, height=np.mean(inverted) * 0.03, distance=50, prominence=np.std(inverted) * 0.03)
 
         return peaks
     
     def give_tree_img(self, image_blur):
+        """
+        Splits a blurred image into three horizontal sections based on detected horizontal lines.
+        This method processes the input image to detect horizontal lines using Canny edge detection
+        and a custom line grouping algorithm. It then determines the most probable cut positions
+        (y-coordinates) for splitting the image into three parts. If no or only one line is detected,
+        the image is divided into three equal or two unequal parts, respectively.
+        Args:
+            image_blur (numpy.ndarray or array-like): The blurred grayscale image to be split.
+        Returns:
+            tuple: A tuple containing three numpy.ndarray objects, each representing a horizontal section
+                   of the original image (page_1, page_2, page_3).
+        """
+
         if not isinstance(image_blur, np.ndarray):
             image_blur = np.array(image_blur)
 
@@ -77,14 +85,14 @@ class FindsLinesIMG:
         else:
             # Divide into trhee equal parts
             h = image_blur.shape[0]
-            y0, y1, y2, y3 = 0, h//3, h*3//3, h
+            y0, y1, y2, y3 = 0, h//3, h*2//3, h
 
         # Cut image
         page_1 = image_blur[y0:y1]
         page_2 =image_blur[y1:y2]
         page_3 = image_blur[y2:y3]
 
-        return y0, y1, y2, y3
+        return page_1, page_2, page_3
 
 
 
