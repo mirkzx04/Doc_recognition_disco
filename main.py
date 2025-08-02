@@ -1,9 +1,13 @@
 import os
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
-from img_preproc.FindsLinesIMG import FindsLinesIMG
-def load_dataset(dataset_path = './dataset_pdf_v1/images'):
+dataset_path = r"\\10.5.1.36\dataset_IA\dataset_pdf_Solo_Rinnovi\images"
+
+from Dataset_classes.DocDataset import DocumentDataset
+
+def load_dataset(standardizer, dataset_path = './dataset_pdf_v1/images'):
     """
     Loading document image
     """
@@ -17,9 +21,10 @@ def load_dataset(dataset_path = './dataset_pdf_v1/images'):
             # Read image with Open-CV
             img_path = os.path.join(dataset_path, filename)
             img = cv2.imread(img_path)
+            img_resize = standardizer.resize_keep_ratio(img)
 
             if img is not None:
-                imgs.append(imgs)
+                imgs.append(img_resize)
         
         tst += 1
 
@@ -29,14 +34,11 @@ def load_dataset(dataset_path = './dataset_pdf_v1/images'):
     return np.array(imgs)
 
 if __name__ == "__main__":
-    print('=== LOADING IMAGE ===')
-    image = load_dataset()
-    print('=== IMAGE LOADED ===')
+    # Load documentation dataset
+    doc_dataset = DocumentDataset(size=(5000, 5000), blur_kernel=(4,4))
+    doc_dataset.load_dataset()
 
-    # Add filter only for image with trhee documents, take image from JSON
-    
-    line_finder = FindsLinesIMG(low = 0.5, high=0.5)
-    page_1, page_2, page_3 = line_finder.give_tree_img(image)
+
     
     
 
