@@ -62,8 +62,11 @@ class CleanerIMG:
 
         return canvas
 
-    def preproc_image(self, image):
+    def gray_image(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, self.blur_kernel, 0)
 
+        return gray
+    
+    def blur_image(self, image):
+        blur = cv2.GaussianBlur(image, self.blur_kernel, 0)
         return blur

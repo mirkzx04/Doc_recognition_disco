@@ -34,7 +34,7 @@ def load_dataset(standardizer, dataset_path = './dataset_pdf_v1/images'):
 
 if __name__ == "__main__":
     # Load documentation dataset
-    doc_dataset = DocumentDataset(size=(5000, 5000), blur_kernel=(4,4))
+    doc_dataset = DocumentDataset(size=(5500, 5500), blur_kernel=(4,4))
     doc_dataset.load_dataset()
 
     # I take train dataset and validation dataset

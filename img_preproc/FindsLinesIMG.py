@@ -131,7 +131,7 @@ class FindsLinesIMG:
         page_2 =image[y1:y2]
         page_3 = image[y2:y3]
 
-        return page_1, page_2, page_3
+        return y0, y1, y2, y3
 
 
 

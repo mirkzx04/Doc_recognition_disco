@@ -121,20 +121,28 @@ class DocumentDataset(Dataset):
         if img is not None:
             # Resize image
             resize_img = self.cleaner.resize_keep_ratio(img) 
-            gray_blur_img = self.cleaner.preproc_image(resize_img)
+            gray_img = self.cleaner.gray_image(resize_img)
 
             if doc_type == '02':
                 # Take three parts of image and insert to data and its labels
-                img_crop = self.finder.crop_document(gray_blur_img)
-                page_1, page_2, page_3 = self.finder.give_tree_img(img_crop)
+                img_crop = self.finder.crop_document(self.cleaner.blur_image(gray_img))
+                y0, y1, y2, y3= self.finder.give_tree_img(img_crop)
 
-                plt.imshow(page_1)
+                # Cut image
+                page_1 = gray_img[y0:y1]
+                page_2 = gray_img[y1:y2]
+                page_3 = gray_img[y2:y3]
+
+                plt.imshow(page_1, cmap='gray')
+                plt.axis('off')
                 plt.show()
 
-                plt.imshow(page_2)
+                plt.imshow(page_2, cmap='gray')
+                plt.axis('off')
                 plt.show()
 
-                plt.imshow(page_3)
+                plt.imshow(page_3, cmap='gray')
+                plt.axis('off')
                 plt.show()
 
                 self.data.extend(page_1)
