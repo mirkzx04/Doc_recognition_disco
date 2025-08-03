@@ -1,24 +1,28 @@
 import os
 import cv2
 import numpy as np
+import wandb as wb
 
-from torch import nn
-from torch.optim import Adam
-from torch.optim.lr_scheduler import CosineAnnealingLR
+import torch
 
-from torchvision import models, transforms
+import pytorch_lightning as pl
 
+from pytorch_lightning.loggers import WandbLogger
 
 dataset_path = r"\\10.5.1.36\dataset_IA\dataset_pdf_Solo_Rinnovi\images"
 
 from Dataset_classes.DocDataset import DocumentDataset
 
-def freeze_model(model):
-    for name, param in model.named_parameters():
-        if 'fc' not in name:
-            param.requires_grad = False
+from Training.LitModule import LitModule
 
 if __name__ == "__main__":
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f'=== DEVICE : {device} ===')
+
+    # Setting logger
+    wandb_logger = WandbLogger(project=projec_name, log_model=True)
+
     # Load documentation dataset
     doc_dataset = DocumentDataset(size=(5500, 5500), blur_kernel=(4,4))
     doc_dataset.load_dataset()
@@ -36,24 +40,23 @@ if __name__ == "__main__":
 
     train_set, val_set = doc_dataset.split_dataset(num_train, num_val)
 
-    # Load pre train model
-    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
     num_classes = 3
-
-    # Freeze model except for linear layer
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
-    freeze_model(model)
-
-    # Set hyperparameters for optimizer
-    lr = 0.0001
+    lr = 1e-4
     weights_decay = 1e-5
-
     train_epochs = 100
 
-    # Set optimizer, loss and lr_scheduler
-    criterion = nn.CrossEntropyLoss()
-    optimizer = Adam(params=model.fc.parameters(), lr=lr, weight_decay=weights_decay)
-    lr_scheduler = CosineAnnealingLR(optimizer, T_max=train_epochs)
+    model = LitModule(num_classes=num_classes, lr=lr, weights_decay=weights_decay)
+    trainer = pl.Trainer(
+        max_epochs=train_epochs,
+        logger=wandb_logger,
+        accelerator='auto',
+        devices=device,
+        log_every_n_steps=10,
+        deterministic=True,
+        enable_checkpointing=True
+    )
+
+
 
 
 
