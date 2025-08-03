@@ -2,35 +2,21 @@ import os
 import cv2
 import numpy as np
 
+from torch import nn
+from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
+from torchvision import models, transforms
+
+
 dataset_path = r"\\10.5.1.36\dataset_IA\dataset_pdf_Solo_Rinnovi\images"
 
 from Dataset_classes.DocDataset import DocumentDataset
 
-def load_dataset(standardizer, dataset_path = './dataset_pdf_v1/images'):
-    """
-    Loading document image
-    """
-    imgs = []
-    tst = 0
-
-    for filename in os.listdir(dataset_path):
-        # Check file extension
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-
-            # Read image with Open-CV
-            img_path = os.path.join(dataset_path, filename)
-            img = cv2.imread(img_path)
-            img_resize = standardizer.resize_keep_ratio(img)
-
-            if img is not None:
-                imgs.append(img_resize)
-        
-        tst += 1
-
-        if tst == 2:
-            return np.array(imgs)
-
-    return np.array(imgs)
+def freeze_model(model):
+    for name, param in model.named_parameters():
+        if 'fc' not in name:
+            param.requires_grad = False
 
 if __name__ == "__main__":
     # Load documentation dataset
@@ -49,6 +35,26 @@ if __name__ == "__main__":
     print(f'Samples in to validation set : {num_val}')
 
     train_set, val_set = doc_dataset.split_dataset(num_train, num_val)
+
+    # Load pre train model
+    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+    num_classes = 3
+
+    # Freeze model except for linear layer
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    freeze_model(model)
+
+    # Set hyperparameters for optimizer
+    lr = 0.0001
+    weights_decay = 1e-5
+
+    train_epochs = 100
+
+    # Set optimizer, loss and lr_scheduler
+    criterion = nn.CrossEntropyLoss()
+    optimizer = Adam(params=model.fc.parameters(), lr=lr, weight_decay=weights_decay)
+    lr_scheduler = CosineAnnealingLR(optimizer, T_max=train_epochs)
+
 
 
     
