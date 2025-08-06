@@ -119,47 +119,42 @@ class DocumentDataset(Dataset):
         img = cv2.imread(img_path)
 
         if img is not None:
-            # Resize image
-            resize_img = self.cleaner.resize_keep_ratio(img) 
-            gray_img = self.cleaner.gray_image(resize_img)
-
             if doc_type == '02':
-                # Take three parts of image and insert to data and its labels
-                img_crop = self.finder.crop_document(self.cleaner.blur_image(gray_img))
-                y0, y1, y2, y3= self.finder.give_tree_img(img_crop)
+                # Preprocess image
+                gray = self.cleaner.clahe_gray(img)
+                th = self.cleaner.binarize(gray)
+                mask = self.cleaner.morph_clean(th)
 
-                # Cut image
-                page_1 = gray_img[y0:y1]
-                page_2 = gray_img[y1:y2]
-                page_3 = gray_img[y2:y3]
+                # Find contours
+                cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                merged_cnt = np.vstack(cnts).squeeze()
+                aligned_gray = self.cleaner.warp_min_area_rect(gray, merged_cnt, margin = 10)
+                
+                # Give tree image and cut it
+                y0, y1, y2, y3 = self.finder.give_tree_img(aligned_gray)
 
-                plt.imshow(page_1, cmap='gray')
-                plt.axis('off')
-                plt.show()
+                # Resize image
+                page_1 = self.cleaner.resize_keep_ratio(aligned_gray[y0:y1])
+                page_2 = self.cleaner.resize_keep_ratio(aligned_gray[y1:y2])
+                page_3 = self.cleaner.resize_keep_ratio(aligned_gray[y2:y3]) 
 
-                plt.imshow(page_2, cmap='gray')
-                plt.axis('off')
-                plt.show()
+                # Append to data and labels
+                self.data.append(page_1)
+                self.data.append(page_2)
+                self.data.append(page_3)
 
-                plt.imshow(page_3, cmap='gray')
-                plt.axis('off')
-                plt.show()
-
-                self.data.extend(page_1)
-                self.data.extend(page_2)
-                self.data.extend(page_3)
-
-                self.labels.extend(doc_type for _ in range(0, 3))
-
-                self.prepare_standardization(page_1)
-                self.prepare_standardization(page_2)
-                self.prepare_standardization(page_3)
-
+                self.labels.append([doc_type] * 3)
             else:
-                self.data.extend(resize_img)
-                self.labels.extend(doc_type)
+                # Preprocess image
+                gray = self.cleaner.clahe_gray(img)
+                th = self.cleaner.binarize(gray)
+                mask = self.cleaner.morph_clean(th)
+                cleaned_img = self.cleaner.resize_keep_ratio(mask)
+                cleaned_img = cv2.cvtColor(cleaned_img, cv2.COLOR_BGR2GRAY)
 
-                self.prepare_standardization(resize_img)
+                # Append to data and labels
+                self.data.append(cleaned_img)
+                self.labels.append(doc_type)
         else:
             print('=== IMAGE NOT FOUND ===')
     

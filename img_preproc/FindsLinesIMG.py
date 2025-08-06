@@ -1,137 +1,150 @@
-import cv2
+xwimport cv2
 import numpy as np
-
 from scipy.signal import find_peaks
 
+
 class FindsLinesIMG:
-    """
-    Finds lines in an image using the Hough Transform.
-    """
-
+    
     def __init__(self, low, high): 
-        """
-        Initializes the FindsLinesIMG class, idenify the 3 documents in the comsposite image.
-
-        Args:
-            low (int): The lower threshold for the Canny edge detector.
-            high (int): The upper threshold for the Canny edge detector.
-        Returns:
-            None
-        """
-
         self.low_canny = low
         self.high_canny = high
 
-    def find_horizontal_lines(self, img: np.ndarray) -> np.ndarray:
+    def give_tree_img(self, img):
         """
-        Finds lines in the input image using the Hough Transform.
-        Args:
-            img (numpy.ndarray): The input image in which to find lines. 
-        Returns:
-            numpy.ndarray: The image with detected lines drawn on it.
-        """
-
-        # Horizontal projection (sum each lines)
-        horizontal_projection = np.sum(img, axis=1)
-
-        # Find row with low content, reverse the horizontal projection to find the lows as the peaks
-        inverted = np.max(horizontal_projection) - horizontal_projection
-        peaks, _ = find_peaks(inverted, height=np.mean(inverted) * 0.03, 
-                              distance=50, prominence=np.std(inverted) * 0.03)
-
-        return peaks
-    
-    def crop_document(self, image):
-        """
-        Crops the image to the largest external contour found.
-        Args:
-            image (numpy.ndarray): Grayscale input image.
-        Returns:
-            numpy.ndarray: Cropped image or original if no contours found.
-        """
-
-        thresh = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                       cv2.THRESH_BINARY, 15, 8)
+        Finds horizontal division points to split document image into 3 sections.
         
-        # Find borders
-        borders, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not borders:
-            return image
+        This method analyzes the image structure to identify natural horizontal
+        divisions that can be used to split a multi-document image into separate
+        sections.
         
-        # Taked the bigger borders
-        x, y, w, h = cv2.boundingRect(max(borders, key=cv2.contourArea))
-        cropped = image[y:y+h, x:x+w]
-
-        return cropped
-    
-    def reinforce_hirozontal_lines(self, edges, kernel_size = 50):
-        """
-        Reinforces horizontal lines in a binary edge image using morphological closing.
-        This function applies a horizontal rectangular structuring element to the input edge image,
-        enhancing and connecting horizontal lines by performing a morphological closing operation.
+        The algorithm workflow:
+        1. Convert input to numpy array if needed
+        2. Apply Canny edge detection to find image edges
+        3. Reinforce horizontal lines using morphological operations
+        4. Create horizontal projection by summing pixel values along rows
+        5. Find peaks in the inverted projection (valleys in original)
+        6. Group nearby peaks together to identify stable division lines
+        7. Return 4 y-coordinates defining 3 document sections
+        
         Args:
-            edges (numpy.ndarray): Binary edge image (single-channel) where horizontal lines are to be reinforced.
-            kernel_size (int, optional): Length of the horizontal structuring element. Default is 50.
+            img: Input image (color or grayscale) to analyze for divisions
+            
         Returns:
-            numpy.ndarray: Image with reinforced horizontal lines.
+            tuple: Four y-coordinates (y0, y1, y2, y3) where:
+                   - y0: Start of first section (always 0)
+                   - y1: End of first section / Start of second section
+                   - y2: End of second section / Start of third section  
+                   - y3: End of third section (always image height)
         """
+        # Ensure input is a numpy array for consistent processing
+        if not isinstance(img, np.ndarray):
+            img = np.array(img)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(kernel_size), 1))
-        morphed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        # Step 1: Detect edges in the image using Canny algorithm
+        edges = self._canny_edges(img)
+        
+        # Step 2: Reinforce horizontal lines with morphological operations
+        # Kernel size is proportional to image width for adaptive processing
+        kernel_size = max(15, img.shape[1] // 40)
+        morphed = self._reinforce_horizontal_lines(edges, kernel_size)
 
-        return morphed
-    
-    def extract_edges(self, image):
-        return cv2.Canny(image, self.low_canny, self.high_canny)
-    
-    def give_tree_img(self, image):
-        """
-        Splits a blurred image into three horizontal sections based on detected horizontal lines.
-        This method processes the input image to detect horizontal lines using Canny edge detection
-        and a custom line grouping algorithm. It then determines the most probable cut positions
-        (y-coordinates) for splitting the image into three parts. If no or only one line is detected,
-        the image is divided into three equal or two unequal parts, respectively.
-        Args:
-            image_blur (numpy.ndarray or array-like): The blurred grayscale image to be split.
-        Returns:
-            tuple: A tuple containing three numpy.ndarray objects, each representing a horizontal section
-                   of the original image (page_1, page_2, page_3).
-        """
+        # Step 3: Create horizontal projection by summing along rows
+        # This creates a 1D array where each value represents the total edge intensity in that row
+        proj = np.sum(morphed, axis=1)
+        
+        # Step 4: Invert projection to find valleys (gaps between content)
+        # Areas with less content will have higher values after inversion
+        inv = np.max(proj) - proj
+        
+        # Step 5: Find peaks in inverted projection using scipy's find_peaks
+        peaks, _ = find_peaks(inv,
+                              height=np.mean(inv) * 0.03,      # Minimum peak height threshold
+                              distance=50,                      # Minimum distance between peaks
+                              prominence=np.std(inv) * 0.03)   # Minimum peak prominence
 
-        if not isinstance(image, np.ndarray):
-            image = np.array(image)
-
-        edges = self.extract_edges(image)
-        morphed = self.reinforce_hirozontal_lines(edges)
-        peaks = self.find_horizontal_lines(morphed)
-
+        # Step 6: Group nearby peaks to identify stable division lines
         sort_peaks = sorted(peaks)
         groups = []
-
+        
         for y in sort_peaks:
+            # If no groups exist or peak is far from last group, create new group
             if not groups or abs(y - groups[-1][-1]) > 5:
                 groups.append([y])
             else:
+                # Add peak to existing group if it's close enough (within 5 pixels)
                 groups[-1].append(y)
         
-        cut_ys = [int(np.mean(group)) for group in groups if len(group) > 1]
+        # Calculate average position for each group with multiple peaks
+        # Only consider groups with multiple peaks as they are more reliable
+        cut_ys = [int(np.mean(g)) for g in groups if len(g) > 1]
 
+        # Step 7: Determine final division points based on found cuts
+        h = img.shape[0]
+        
         if len(cut_ys) >= 2:
-            y0, y1, y2, y3 = 0, cut_ys[0], cut_ys[1], image.shape[0]
+            # Two or more reliable cuts found: use first two for 3 sections
+            y0, y1, y2, y3 = 0, cut_ys[0], cut_ys[1], h
         elif len(cut_ys) == 1:
-            h = image.shape[0]
+            # One reliable cut found: split into 2 sections, third is empty
             y0, y1, y2, y3 = 0, cut_ys[0], h, h
         else:
-            # Divide into trhee equal parts
-            h = image.shape[0]
-            y0, y1, y2, y3 = 0, h//3, h*2//3, h
-
-        # Cut image
-        page_1 = image[y0:y1]
-        page_2 =image[y1:y2]
-        page_3 = image[y2:y3]
+            # No reliable cuts found: divide into equal thirds as fallback
+            y0, y1, y2, y3 = 0, h // 3, (2 * h) // 3, h
 
         return y0, y1, y2, y3
 
+    # ==========================================
+    # PRIVATE METHODS (Internal implementation)
+    # ==========================================
 
+    def _canny_edges(self, img_gray, low=None, high=None):
+        """
+        Applies Canny edge detection with automatic or manual threshold calculation.
+        Args:
+            img_gray: Input grayscale image
+            low (int, optional): Lower threshold for edge detection. Uses class default if None
+            high (int, optional): Upper threshold for edge detection. Uses class default if None
+            
+        Returns:
+            numpy.ndarray: Binary edge image where edges are white (255) and background is black (0)
+        """
+        # Convert to grayscale if input is color image
+        if img_gray.ndim == 3:
+            img_gray = cv2.cvtColor(img_gray, cv2.COLOR_BGR2GRAY)
+        
+        # Use provided thresholds or class defaults, with automatic calculation as fallback
+        if low is None or high is None:
+            if hasattr(self, 'low_canny') and hasattr(self, 'high_canny'):
+                # Use class-defined thresholds
+                low = self.low_canny
+                high = self.high_canny
+            else:
+                # Calculate automatic thresholds based on image median
+                v = np.median(img_gray)
+                low = int(max(0, 0.66 * v))    # Lower threshold: 66% of median
+                high = int(min(255, 1.33 * v)) # Upper threshold: 133% of median
+        
+        # Apply Canny edge detection with L2 gradient for better accuracy
+        # L2gradient=True uses L2 norm for gradient magnitude calculation
+        return cv2.Canny(img_gray, low, high, L2gradient=True)
 
+    def _reinforce_horizontal_lines(self, edges, kernel_size=50):
+        """
+        Reinforces horizontal lines using morphological closing with horizontal kernel.
+        Args:
+            edges: Input binary edge image
+            kernel_size (int): Length of horizontal kernel for morphological operation. Default: 50
+            
+        Returns:
+            numpy.ndarray: Image with reinforced horizontal lines
+        """
+        # Ensure minimum kernel size and make it odd for proper morphological operations
+        k = max(3, int(kernel_size))
+        
+        # Create horizontal rectangular kernel (width=k, height=1)
+        # This kernel will connect horizontal elements while preserving vertical gaps
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, 1))
+        
+        # Apply morphological closing to connect horizontal segments
+        # Closing = dilation followed by erosion, fills small gaps in horizontal lines
+        return cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=1)
