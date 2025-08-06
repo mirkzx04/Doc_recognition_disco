@@ -95,13 +95,11 @@ class DocumentDataset(Dataset):
                 print(f'=== JSON NON TROVATO : {e} ===')
 
         # Standardize image
-        mean = self.sum_mid / self.count
-        std = np.sqrt(self.sum_std / self.count - self.mean**2)
-
-        self.data = np.ndarray(self.data, dtype=np.float32)
+        self.data = np.array(self.data, dtype=np.float32)
+        mean = self.data.mean() ; std = self.data.std()
         self.data = (self.data - mean) / std
 
-        self.labels = np.ndarray(self.labels, dtype=np.int32)
+        self.labels = np.array(self.labels, dtype=np.int32)
 
     def read_img(self, fiscal_code, doc_type):
         """
@@ -158,25 +156,6 @@ class DocumentDataset(Dataset):
         else:
             print('=== IMAGE NOT FOUND ===')
     
-    def prepare_standardization(self, img):
-        """
-        Updates running totals required for image standardization.
-        This method accumulates the sum of pixel values and the sum of squared pixel values
-        across all images processed, as well as the total pixel count. These statistics are
-        used to compute the mean and standard deviation for dataset normalization.
-        Args:
-            img (numpy.ndarray): The input image array, expected to have shape (H, W, C),
-                where H is height, W is width, and C is the number of channels.
-        Updates:
-            self.sum_mid (numpy.ndarray): Accumulates the sum of pixel values per channel.
-            self.sum_std (numpy.ndarray): Accumulates the sum of squared pixel values per channel.
-            self.count (int): Accumulates the total number of pixels processed.
-        """
-
-        self.sum_mid += img.sum(axis=(0, 1))
-        self.sum_std += (img**2).sum(axis=(0,1))
-        self.count += img.shape[0] * img.shape[1]
-
     def split_dataset(self, num_train, num_val):
         train_set = DocumentDatasetTrain(self.data[:num_train], self.labels[:num_train])
         val_set = DocumentDatasetVal(self.data[num_train+1:num_val], self.labels[num_train+1:num_val])
