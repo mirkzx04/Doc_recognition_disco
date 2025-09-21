@@ -9,7 +9,7 @@ import wandb as wb
 
 # from pytorch_lightning.loggers import WandbLogger
 
-dataset_path = 'dataset_pdf_v1'
+dataset_path = r'\\10.5.1.36\dataset_IA\dataset_pdf_v1'  # Usa raw string
 
 from Dataset_classes.DocDataset import DocumentDataset
 
@@ -24,8 +24,8 @@ if __name__ == "__main__":
     # wandb_logger = WandbLogger(project=projec_name, log_model=True)
 
     # Load documentation dataset
-    doc_dataset = DocumentDataset(size=(5500, 5500), blur_kernel=(4,4), dataset_path=dataset_path)
-    doc_dataset.load_dataset()
+    doc_dataset = DocumentDataset(size=(224, 224), blur_kernel=(4,4), dataset_path=dataset_path)
+    doc_dataset.create_clean_dataset()
 
     # # I take train dataset and validation dataset
     # len_dataset = doc_dataset.__len__()
@@ -60,6 +60,6 @@ if __name__ == "__main__":
 
 
 
-    
-    
+
+
 

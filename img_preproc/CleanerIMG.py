@@ -19,21 +19,24 @@ class CleanerIMG:
     - Valutazione qualità
     """
     
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, conservative_crop=True):
         """
         Inizializza il cleaner con parametri ottimizzati.
         
         Args:
             debug (bool): Se attivare modalità debug per visualizzazioni
+            conservative_crop (bool): Se usare cropping conservativo
         """
         self.debug = debug
+        self.conservative_crop = conservative_crop
         
-        # Parametri per rilevamento contorni
+        # Parametri per rilevamento contorni - AGGIORNATI
         self.contour_params = {
-            'min_area_ratio': 0.1,  # Minima area relativa del documento
-            'max_area_ratio': 0.95,  # Massima area relativa del documento
-            'aspect_ratio_tolerance': 0.1,  # Tolleranza per proporzioni
-            'convexity_threshold': 0.85  # Soglia convessità per validazione forma
+            'min_area_ratio': 0.3 if conservative_crop else 0.1,  # Aumentato
+            'max_area_ratio': 0.95,
+            'aspect_ratio_tolerance': 0.2 if conservative_crop else 0.1,  # Più permissivo
+            'convexity_threshold': 0.75 if conservative_crop else 0.85,  # Ridotto per forme meno perfette
+            'border_proximity_weight': 2.0  # Nuovo: peso per vicinanza ai bordi
         }
         
         # Parametri per correzione illuminazione
@@ -52,430 +55,197 @@ class CleanerIMG:
             'max_line_gap_ratio': 0.1
         }
         
+        self.light_target_mean = 0.52   # target luminosità (0..1)
+        self.min_doc_area_card = 0.30 if conservative_crop else 0.20
+        self.min_doc_area_sheet = 0.45 if conservative_crop else 0.30
+
         if self.debug:
             print("🔧 CleanerIMG inizializzato in modalità DEBUG")
     
-    def pipeline_clean(self, img, doc_type='01'):
-        """
-        Pipeline completa di pulizia adattiva per tipo documento.
-        
-        Args:
-            img: Immagine da pulire
-            doc_type: Tipo documento ('01'=tessera, '02'=foglio, '03'=multipli)
-        
-        Returns:
-            Immagine pulita o None se pulizia fallisce
-        """
-        if img is None or img.size == 0:
-            return None
-            
-        try:
-            # Step 1: Preprocessing iniziale
-            img_work = self._initial_preprocessing(img.copy())
-            
-            # Step 2: Rilevamento e correzione rotazione
-            img_work = self._detect_and_correct_rotation(img_work, doc_type)
-            
-            # Step 3: Rimozione sfondo e cropping intelligente
-            img_work = self._intelligent_crop(img_work, doc_type)
-            
-            # Step 4: Correzione illuminazione e ombre
-            img_work = self._enhance_lighting(img_work)
-            
-            # Step 5: Pulizia finale
-            img_work = self._final_cleanup(img_work, doc_type)
-            
-            if self.debug:
-                self._show_pipeline_debug(img, img_work, doc_type)
-                
-            return img_work
-            
-        except Exception as e:
-            import traceback
-            if self.debug:
-                print(f"⚠️ Errore durante pulizia: {e}")
-                print(f"🔍 Traceback completo:")
-                traceback.print_exc()
-            return None
-    
-    def _initial_preprocessing(self, img):
-        """Preprocessing iniziale: riduzione rumore e normalizzazione."""
-        # Riduzione rumore
-        img = cv2.bilateralFilter(img, 9, 75, 75)
-        
-        # Normalizzazione range colori
-        img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        
+    # === Migliorie chiave ===
+    def _white_balance_grayworld(self, img):
+        b, g, r = cv2.split(img.astype(np.float32))
+        mean_b, mean_g, mean_r = [np.mean(c) + 1e-6 for c in (b, g, r)]
+        k = (mean_r + mean_g + mean_b) / 3.0
+        b *= k / mean_b; g *= k / mean_g; r *= k / mean_r
+        wb = np.clip(cv2.merge([b, g, r]), 0, 255).astype(np.uint8)
+        return wb
+
+    def _normalize_lighting(self, img):
+        img = self._white_balance_grayworld(img)
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        L, A, B = cv2.split(lab)
+        clahe = cv2.createCLAHE(
+            clipLimit=self.lighting_params['clahe_clip_limit'],
+            tileGridSize=self.lighting_params['clahe_tile_size']
+        )
+        Lc = clahe.apply(L)
+        lab = cv2.merge([Lc, A, B])
+        img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        bg = cv2.GaussianBlur(gray, (0, 0), sigmaX=25, sigmaY=25)
+        bg = np.maximum(bg, 1.0)
+        norm = (gray / bg)
+        norm = np.clip(norm, 0.25, 2.0)  # clamp per evitare banding/zone nere
+        norm = cv2.normalize(norm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        # riallinea la luminanza al target
+        m = norm.mean() / 255.0
+        gain = np.clip(self.light_target_mean / max(m, 1e-3), 0.7, 1.4)
+        L_adj = np.clip(norm.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+        img = cv2.cvtColor(cv2.merge([L_adj, A, B]), cv2.COLOR_LAB2BGR)
         return img
-    
-    def _detect_and_correct_rotation(self, img, doc_type):
-        """
-        Rileva e corregge la rotazione dell'immagine usando multiple tecniche.
-        """
+
+    # ---------- Rilevamento documento ----------
+    def _find_document_mask(self, gray):
+        # threshold adattivo + morfologia per isolare il foglio/card
+        blur = cv2.GaussianBlur(gray, (5,5), 0)
+        thr = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                    cv2.THRESH_BINARY, 31, 5)
+        # inverti se serve per avere documento=bianco
+        if np.mean(thr[:10, :]) + np.mean(thr[-10:, :]) + np.mean(thr[:, :10]) + np.mean(thr[:, -10:]) < 4*127:
+            thr = cv2.bitwise_not(thr)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9,9))
+        mask = cv2.morphologyEx(thr, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.medianBlur(mask, 5)
+
+        cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[-2] if len(cnts) >= 2 else cnts[0]
+        if not cnts:
+            return None, None
+
+        H, W = gray.shape[:2]
+        img_area = H * W
+        best = max(cnts, key=cv2.contourArea)
+        area = cv2.contourArea(best)
+        return best, area / img_area
+
+    def _crop_from_contour(self, img, cnt):
+        rect = cv2.minAreaRect(cnt)
+        return self._crop_min_area_rect(img, rect)
+
+    def _largest_doc_rect(self, gray, min_area_ratio=0.25, max_area_ratio=0.98):
+        # versione precedente (fallback)
+        blur = cv2.GaussianBlur(gray, (5,5), 0)
+        edges = cv2.Canny(blur, 80, 200)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT,(9,9)))
+        cnts = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[-2] if len(cnts) >= 2 else cnts[0]
+        if not cnts:
+            return None
+        H, W = gray.shape[:2]; img_area = H * W
+        best = None; best_score = -1.0
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if area < img_area * min_area_ratio or area > img_area * max_area_ratio:
+                continue
+            rect = cv2.minAreaRect(c)
+            (w, h) = rect[1]
+            if w < 5 or h < 5: 
+                continue
+            box = cv2.boxPoints(rect).astype(np.int32)
+            x, y, ww, hh = cv2.boundingRect(box)
+            border_touch = int(x < 0.05*W) + int(y < 0.05*H) + int(x+ww > 0.95*W) + int(y+hh > 0.95*H)
+            rectangularity = area / float(ww*hh + 1e-6)
+            score = rectangularity + 0.25*border_touch + (area/img_area)
+            if score > best_score:
+                best_score = score; best = rect
+        return best
+
+    def _crop_min_area_rect(self, img, rect, margin_ratio=0.01):
+        box = cv2.boxPoints(rect).astype(np.float32)
+        w, h = rect[1]
+        if w < 1 or h < 1:
+            return img
+        s = box.sum(axis=1); d = np.diff(box, axis=1).ravel()
+        tl = box[np.argmin(s)]; br = box[np.argmax(s)]
+        tr = box[np.argmax(d)];  bl = box[np.argmin(d)]
+        src = np.array([tl,tr,br,bl], dtype=np.float32)
+        target_w = int(round(max(w, h))); target_h = int(round(min(w, h))) if w > h else int(round(max(w, h)))
+        if target_w < 20 or target_h < 20:
+            return img
+        dst = np.array([[0,0],[target_w-1,0],[target_w-1,target_h-1],[0,target_h-1]], dtype=np.float32)
+        M = cv2.getPerspectiveTransform(src, dst)
+        warped = cv2.warpPerspective(img, M, (target_w, target_h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        m = int(margin_ratio * min(target_w, target_h))
+        if m > 0 and target_w > 2*m and target_h > 2*m:
+            warped = warped[m:target_h-m, m:target_w-m]
+        return warped
+
+    def _deskew_sheet(self, img):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Metodo 1: Hough Lines per linee rette del documento
-        angle_hough = self._detect_rotation_hough(gray)
-        
-        # Metodo 2: PCA dei contorni principali
-        angle_pca = self._detect_rotation_pca(gray)
-        
-        # Metodo 3: Analisi gradiente per tessere
-        if doc_type == '01':  # Tessere
-            angle_gradient = self._detect_rotation_gradient(gray)
-            angles = [angle_hough, angle_pca, angle_gradient]
-        else:
-            angles = [angle_hough, angle_pca]
-        
-        # Scegli l'angolo più affidabile
-        angles = [a for a in angles if a is not None]
+        edges = cv2.Canny(cv2.GaussianBlur(gray,(3,3),0), 50, 150)
+        lines = cv2.HoughLines(edges, 1, np.pi/180, 150)
+        if lines is None:
+            return img
+        angles = []
+        for rho, theta in lines[:,0]:
+            ang = (theta * 180/np.pi) - 90
+            if -45 <= ang <= 45:
+                angles.append(ang)
         if not angles:
             return img
-            
-        # Usa la mediana per robustezza
-        final_angle = np.median(angles)
-        
-        # Correggi solo se rotazione significativa
-        if abs(final_angle) > self.rotation_params['angle_tolerance']:
-            img = self._rotate_image(img, final_angle)
-            if self.debug:
-                print(f"🔄 Rotazione corretta: {final_angle:.1f}°")
-        
-        return img
-    
-    def _detect_rotation_hough(self, gray):
-        """Rileva rotazione usando Hough Line Transform."""
-        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-        lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=self.rotation_params['hough_threshold'])
-        
-        if lines is None:
-            return None
-            
-        angles = []
-        for line in lines[:20]:  # Analizza solo le prime 20 linee
-            # Le linee di Hough possono avere formati diversi
-            if isinstance(line, (list, tuple, np.ndarray)):
-                if len(line) == 2:
-                    rho, theta = line[0], line[1]
-                elif len(line) == 1 and len(line[0]) >= 2:
-                    rho, theta = line[0][0], line[0][1]
-                else:
-                    continue  # Skip linee malformate
-            else:
-                continue
-                
-            angle = theta * 180 / np.pi - 90
-            if abs(angle) < 45:  # Considera solo angoli ragionevoli
-                angles.append(angle)
-        
-        return np.median(angles) if angles else None
-    
-    def _detect_rotation_pca(self, gray):
-        """Rileva rotazione usando PCA sui contorni principali."""
-        # Trova contorni
-        contours_result = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = contours_result[-2] if len(contours_result) >= 2 else contours_result[0]
-        
-        if not contours:
-            return None
-            
-        # Seleziona il contorno più grande
-        largest_contour = max(contours, key=cv2.contourArea)
-        
-        if len(largest_contour) < 10:
-            return None
-            
-        # Calcola PCA
-        points = largest_contour.reshape(-1, 2).astype(np.float32)
-        mean, eigenvectors = cv2.PCACompute(points, mean=None)
-        
-        # Calcola angolo dal primo autovettore
-        angle = np.arctan2(eigenvectors[0, 1], eigenvectors[0, 0]) * 180 / np.pi
-        
-        return angle
-    
-    def _detect_rotation_gradient(self, gray):
-        """Rileva rotazione usando analisi del gradiente (ottimo per tessere)."""
-        # Calcola gradiente
-        grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        
-        # Calcola orientazione gradiente
-        magnitude = np.sqrt(grad_x**2 + grad_y**2)
-        orientation = np.arctan2(grad_y, grad_x) * 180 / np.pi
-        
-        # Filtra per magnitudine significativa
-        mask = magnitude > np.percentile(magnitude, 75)
-        valid_orientations = orientation[mask]
-        
-        if len(valid_orientations) == 0:
-            return None
-            
-        # Trova orientazione dominante
-        hist, bins = np.histogram(valid_orientations, bins=180, range=(-90, 90))
-        dominant_angle = bins[np.argmax(hist)]
-        
-        return dominant_angle
-    
-    def _rotate_image(self, img, angle):
-        """Ruota l'immagine dell'angolo specificato."""
-        h, w = img.shape[:2]
-        center = (w // 2, h // 2)
-        
-        # Matrice di rotazione
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        
-        # Calcola nuove dimensioni per evitare crop
-        cos_theta = np.abs(M[0, 0])
-        sin_theta = np.abs(M[0, 1])
-        new_w = int((h * sin_theta) + (w * cos_theta))
-        new_h = int((h * cos_theta) + (w * sin_theta))
-        
-        # Aggiusta traslazione
-        M[0, 2] += (new_w / 2) - center[0]
-        M[1, 2] += (new_h / 2) - center[1]
-        
-        # Applica rotazione
-        rotated = cv2.warpAffine(img, M, (new_w, new_h), flags=cv2.INTER_CUBIC, 
-                               borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
-        
-        return rotated
-    
-    def _intelligent_crop(self, img, doc_type):
-        """
-        Cropping intelligente per rimuovere sfondi inutili.
-        Adattivo per tipo documento.
-        """
+        angle = np.median(angles)
+        if abs(angle) < 5:
+            return img
+        (h, w) = img.shape[:2]
+        M = cv2.getRotationMatrix2D((w//2, h//2), angle, 1.0)
+        return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    def _split_card_front_back(self, img):
+        # se due card impilate (fronte/retro), prova split orizzontale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        if doc_type == '01':  # Tessere - forma rettangolare ben definita
-            return self._crop_card_document(img, gray)
-        elif doc_type == '02':  # Fogli - forma rettangolare più grande
-            return self._crop_sheet_document(img, gray)
-        else:  # Documenti multipli - gestione speciale
-            return self._crop_multi_document(img, gray)
-    
-    def _crop_card_document(self, img, gray):
-        """Cropping specifico per documenti tipo tessera."""
-        # Threshold adattivo per tessere
-        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                     cv2.THRESH_BINARY, 11, 2)
-        
-        # Operazioni morfologiche per pulire
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        
-        # Trova contorni
-        contours_result = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = contours_result[-2] if len(contours_result) >= 2 else contours_result[0]
-        
-        if not contours:
-            return img
-            
-        # Filtra contorni per tessere (aspect ratio circa 1.6:1)
-        valid_contours = []
-        img_area = img.shape[0] * img.shape[1]
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < img_area * self.contour_params['min_area_ratio']:
-                continue
-                
-            # Calcola bounding rectangle
-            x, y, w, h = cv2.boundingRect(contour)
-            aspect_ratio = w / h if h > 0 else 0
-            
-            # Tessere hanno aspect ratio tra 1.4 e 1.8
-            if 1.4 <= aspect_ratio <= 1.8:
-                valid_contours.append((contour, area))
-        
-        if not valid_contours:
-            return img
-            
-        # Seleziona il contorno più grande valido
-        best_contour = max(valid_contours, key=lambda x: x[1])[0]
-        
-        # Ottieni bounding box con margine
-        x, y, w, h = cv2.boundingRect(best_contour)
-        margin = min(w, h) // 20  # Margine del 5%
-        
-        x1 = max(0, x - margin)
-        y1 = max(0, y - margin)
-        x2 = min(img.shape[1], x + w + margin)
-        y2 = min(img.shape[0], y + h + margin)
-        
-        return img[y1:y2, x1:x2]
-    
-    def _crop_sheet_document(self, img, gray):
-        """Cropping specifico per documenti tipo foglio."""
-        # Per fogli uso edge detection più aggressiva
-        edges = cv2.Canny(gray, 30, 100)
-        
-        # Dilata gli edge per connettere bordi spezzati
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        edges = cv2.dilate(edges, kernel, iterations=2)
-        
-        # Trova contorni
-        contours_result = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = contours_result[-2] if len(contours_result) >= 2 else contours_result[0]
-        
-        if not contours:
-            return img
-            
-        # Filtra per area e aspect ratio di fogli
-        img_area = img.shape[0] * img.shape[1]
-        valid_contours = []
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < img_area * 0.2:  # Fogli occupano più spazio
-                continue
-                
-            # Approssima contorno
-            epsilon = 0.02 * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-            
-            # Verifica se è simile a un rettangolo
-            if len(approx) >= 4:
-                valid_contours.append((contour, area))
-        
-        if not valid_contours:
-            return img
-            
-        # Seleziona il contorno più grande
-        best_contour = max(valid_contours, key=lambda x: x[1])[0]
-        
-        # Usa convex hull per ottenere forma più regolare
-        hull = cv2.convexHull(best_contour)
-        x, y, w, h = cv2.boundingRect(hull)
-        
-        # Margine più conservativo per fogli
-        margin = min(w, h) // 50
-        
-        x1 = max(0, x - margin)
-        y1 = max(0, y - margin)
-        x2 = min(img.shape[1], x + w + margin)
-        y2 = min(img.shape[0], y + h + margin)
-        
-        return img[y1:y2, x1:x2]
-    
-    def _crop_multi_document(self, img, gray):
-        """Cropping per documenti multipli - rimuove solo bordi ovvi."""
-        # Per multipli, crop conservativo per non perdere documenti
-        edges = cv2.Canny(gray, 50, 150)
-        
-        # Trova coordinate dei bordi attivi
-        rows_with_content = np.where(np.sum(edges, axis=1) > 0)[0]
-        cols_with_content = np.where(np.sum(edges, axis=0) > 0)[0]
-        
-        if len(rows_with_content) == 0 or len(cols_with_content) == 0:
-            return img
-            
-        # Espandi leggermente i bordi
-        margin = 20
-        y1 = max(0, rows_with_content[0] - margin)
-        y2 = min(img.shape[0], rows_with_content[-1] + margin)
-        x1 = max(0, cols_with_content[0] - margin)
-        x2 = min(img.shape[1], cols_with_content[-1] + margin)
-        
-        return img[y1:y2, x1:x2]
-    
-    def _enhance_lighting(self, img):
-        """
-        Migliora l'illuminazione correggendo non uniformità e ombre.
-        """
-        # Converte in LAB per lavorare sulla luminanza
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        
-        # CLAHE per migliorare contrasto locale
-        clahe = cv2.createCLAHE(clipLimit=self.lighting_params['clahe_clip_limit'], 
-                               tileGridSize=self.lighting_params['clahe_tile_size'])
-        l_enhanced = clahe.apply(l)
-        
-        # Correzione illuminazione non uniforme
-        l_corrected = self._correct_uneven_lighting(l_enhanced)
-        
-        # Rimuovi ombre
-        l_no_shadows = self._remove_shadows(l_corrected)
-        
-        # Ricomponi immagine
-        enhanced_lab = cv2.merge([l_no_shadows, a, b])
-        enhanced_img = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
-        
-        # Gamma correction finale
-        gamma = self._calculate_optimal_gamma(enhanced_img)
-        enhanced_img = self._apply_gamma_correction(enhanced_img, gamma)
-        
-        return enhanced_img
-    
-    def _correct_uneven_lighting(self, l_channel):
-        """Corregge illuminazione non uniforme."""
-        # Stima dell'illuminazione di sfondo usando filtro gaussiano
-        blurred = cv2.GaussianBlur(l_channel, (0, 0), sigmaX=l_channel.shape[1]/6)
-        
-        # Normalizza
-        corrected = cv2.divide(l_channel, blurred, scale=128)
-        
-        return np.clip(corrected, 0, 255).astype(np.uint8)
-    
-    def _remove_shadows(self, l_channel):
-        """Rimuove ombre usando morfologia."""
-        # Rileva zone scure (potenziali ombre)
-        mean_intensity = np.mean(l_channel)
-        shadow_threshold = mean_intensity * self.lighting_params['shadow_threshold']
-        
-        shadow_mask = l_channel < shadow_threshold
-        
-        if np.sum(shadow_mask) == 0:
-            return l_channel
-            
-        # Applica correzione selettiva alle zone d'ombra
-        corrected = l_channel.copy()
-        shadow_areas = l_channel[shadow_mask]
-        
-        # Alza la luminosità delle zone d'ombra
-        brightness_boost = mean_intensity - np.mean(shadow_areas)
-        corrected[shadow_mask] = np.clip(shadow_areas + brightness_boost * 0.7, 0, 255)
-        
-        return corrected.astype(np.uint8)
-    
-    def _calculate_optimal_gamma(self, img):
-        """Calcola valore gamma ottimale per l'immagine."""
+        proj = np.mean(gray, axis=1)
+        # smussa e trova valle importante vicino al centro
+        sm = cv2.GaussianBlur(proj.reshape(-1,1), (0,0), 7).ravel()
+        H = len(sm)
+        mid = H//2
+        window = slice(int(H*0.3), int(H*0.7))
+        idx = int(np.argmin(sm[window])) + int(H*0.3)
+        # controlla che siano due blocchi separati (bordo chiaro nel mezzo)
+        if abs(idx - mid) < int(H*0.15):
+            top_mean = np.mean(sm[:idx]); bot_mean = np.mean(sm[idx:])
+            if abs(top_mean - bot_mean) < 10:  # differenza contenuta
+                return [img]  # non split
+        # verifica altezze minime
+        if idx > int(H*0.25) and (H-idx) > int(H*0.25):
+            return [img[:idx, :], img[idx:, :]]
+        return [img]
+
+    # ---------- Pipeline principale ----------
+    def pipeline_clean(self, img, doc_type):
+        img = self._normalize_lighting(img)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Usa la media logaritmica per stimare gamma
-        mean_log = np.mean(np.log(gray + 1))
-        target_log = np.log(128)  # Target per immagine ben esposta
-        
-        gamma = target_log / mean_log if mean_log > 0 else 1.0
-        
-        # Clamp nel range ragionevole
-        gamma = np.clip(gamma, 
-                       self.lighting_params['gamma_range'][0], 
-                       self.lighting_params['gamma_range'][1])
-        
-        return gamma
-    
-    def _apply_gamma_correction(self, img, gamma):
-        """Applica correzione gamma."""
-        inv_gamma = 1.0 / gamma
-        table = np.array([((i / 255.0) ** inv_gamma) * 255
-                         for i in np.arange(0, 256)]).astype("uint8")
-        
-        return cv2.LUT(img, table)
-    
-    def _final_cleanup(self, img, doc_type):
-        """Pulizia finale: sharpening e riduzione rumore."""
-        # Unsharp masking per nitidezza
-        blurred = cv2.GaussianBlur(img, (0, 0), 1.0)
-        sharpened = cv2.addWeighted(img, 1.5, blurred, -0.5, 0)
-        
-        # Riduzione rumore finale
-        cleaned = cv2.bilateralFilter(sharpened, 5, 50, 50)
-        
-        return cleaned
+
+        cnt, area_ratio = self._find_document_mask(gray)
+        if cnt is not None:
+            img_crop = self._crop_from_contour(img, cnt)
+        else:
+            rect = self._largest_doc_rect(gray, min_area_ratio=0.25, max_area_ratio=0.98)
+            img_crop = self._crop_min_area_rect(img, rect) if rect is not None else img
+
+        # Gate sull’area: se troppo piccolo, usa fallback più permissivo
+        H0, W0 = img.shape[:2]
+        Hc, Wc = img_crop.shape[:2]
+        area_ok = (Hc*Wc) >= (H0*W0*(self.min_doc_area_card if doc_type != '02' else self.min_doc_area_sheet))
+        if not area_ok:
+            rect2 = self._largest_doc_rect(gray, min_area_ratio=0.15, max_area_ratio=0.995)
+            if rect2 is not None:
+                img_crop = self._crop_min_area_rect(img, rect2)
+
+        if doc_type == '02':
+            img_crop = self._deskew_sheet(img_crop)
+
+        # Se è una card, prova a splittare fronte/retro
+        if doc_type != '02':
+            parts = self._split_card_front_back(img_crop)
+            # per ora ritorna la parte più grande (puoi salvare entrambe nel multi-doc pipeline)
+            img_crop = max(parts, key=lambda im: im.shape[0]*im.shape[1])
+
+        return img_crop
     
     def process_multi_documents(self, img, finder=None):
         """
