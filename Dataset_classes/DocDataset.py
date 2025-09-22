@@ -77,7 +77,55 @@ class DocumentDataset(Dataset):
 
         return images, labels
     
-    def read_img(self, filename, doc_type):
+    def create_dataset(self, type_set = 'uncleaned'):
+        """
+        Create dataset by loading images and labels from the specified directory.
+        Images are resized to 224x224 and normalized. The dataset statistics (mean and std)
+        are computed and used to standardize the images.
+
+        Args:
+            type_set (str, optional): Type of dataset to create ('uncleaned' or
+        """
+        labels_dir = os.path.join(self.dataset_pth, self.label_path)
+
+        for i, json_file in enumerate(os.listdir(labels_dir)):
+            json_path = os.path.join(labels_dir, json_file)
+            with open(json_path, 'r') as file:
+                data = json.load(file)
+                data = json.loads(data['ground_truth'])
+            
+            # Read image
+            base_filename = json_file.replace(".json", "")
+            if type_set == 'cleaned':
+                self.img_path = 'clean_img'
+            img = self.read_img(base_filename)
+
+            # Insert image in dataset
+            if img is not None:
+                if type_set is not 'cleaned':
+                    resized_img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_AREA)
+                normalized_img = resized_img.astype(np.float32) / 255.0
+                
+                self.data.append(normalized_img)
+                self.labels.append(int(data['tipoDocumento']))
+                
+                # Compute statistics for mean and std
+                self.sum_mid += np.mean(normalized_img, axis=(0, 1))  # Mean per channel
+                self.sum_std += np.std(normalized_img, axis=(0, 1))   # Std per channel
+                self.count += 1
+
+        if self.data:
+            self.data = np.array(self.data, dtype=np.float32)
+            self.labels = np.array(self.labels, dtype=np.int64)
+            
+            # compute media and std of dataset
+            mean = self.sum_mid / self.count
+            std = self.sum_std / self.count
+            
+            for i in range(len(self.data)):
+                self.data[i] = (self.data[i] - mean) / (std + 1e-8)  # +1e-8 per evitare divisione per zero
+            
+    def read_img(self, filename):
         img_path = os.path.join(self.dataset_pth, self.img_path, f"{filename}.jpg")
         img = cv2.imread(img_path)
         return img
@@ -224,3 +272,50 @@ class DocumentDataset(Dataset):
                         
         except Exception as e:
             print(f"Errore processando documenti multipli {filename}: {str(e)}")
+    
+    def split_dataset(self, train_ratio, val_ratio):
+        """
+        Splits the dataset into training and validation sets based on the provided ratios.
+        
+        Args:
+            train_ratio (float): Proportion for the training set 
+            val_ratio (float): Proportion for the validation set 
+
+        Returns:
+            tuple: (train_dataset, val_dataset) - Instances of DocumentDatasetTrain and DocumentDatasetVal
+        """
+        if not self.data or not self.labels:
+            raise ValueError("Empty dataset! Please run create_dataset() first.")
+            
+        if abs(train_ratio + val_ratio - 1.0) > 1e-6:
+            raise ValueError("train_ratio + val_ratio must equal 1.0")
+
+        # Compute the number of samples
+        total_samples = len(self.data)
+        num_train = int(total_samples * train_ratio)
+        num_val = total_samples - num_train
+        
+        print(f"Splitting dataset:")
+        print(f"  Total samples: {total_samples}")
+        print(f"  Training set: {num_train} samples ({train_ratio*100:.1f}%)")
+        print(f"  Validation set: {num_val} samples ({val_ratio*100:.1f}%)")
+
+        #  Create random indices to shuffle the dataset
+        indices = np.random.permutation(total_samples)
+        
+
+        train_indices = indices[:num_train]
+        val_indices = indices[num_train:]
+
+        # Extract data for training and validation
+        train_data = self.data[train_indices]
+        train_labels = self.labels[train_indices]
+        
+        val_data = self.data[val_indices]
+        val_labels = self.labels[val_indices]
+
+        # Create the datasets
+        train_dataset = DocumentDatasetTrain(train_data, train_labels)
+        val_dataset = DocumentDatasetVal(val_data, val_labels)
+        
+        return train_dataset, val_dataset
