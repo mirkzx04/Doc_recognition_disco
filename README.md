@@ -1,64 +1,22 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+# DiscoLazio Document Classification 
 
+## Dataset 
+Our dataset is composed of the student document images. The images has differents size. The preprocessing of the dataset consisted of the resizing and standardization of the images.
+To do this i had implemented a DocDataset class, it take all image from dataset, resize and standardize it.
+
+Classes in the img_prepoc folder are for image preprocessing. But we aren't using it because in our tests with preprocessed images, we didn't see significant improvement.
+So as preprocessing we are only using resizing and standardization of the images. The resizing is necessary because the network takes 224x224 images as input.
 # DiscoLazio Document classification 
 
-## Indice
+## Model
 
-- [Introduzione](#introduzione)
-- [Pipeline](#2-pipeline)
-    - [Pulizia del dataset](#21-pulizia-del-dataset)
-        - [Algoritmi](#211-algoritmi)
-    - [Modello di riconoscimento](#22-modello-di-riconocimento)
-- [Training](#3-strategia-di-training)
+As a model we are using a pretrained ResNet. So we are fine-tuning it to adapt it to our dataset
+To fine-tune the ResNet we froze all the networks weights except for the linear layer weights. We then unfroze the layer 4 and layer 3 parameters at different epochs.
 
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-# 1. Introduzione
-
-L'applicazione deve usufuruire del dataset DiscoLazio per effettuare il riconoscimento dei documenti, pù precisamente vanno riconosciuti i documenti di tipo : 0, 1 e 2.
-Ogni indice rappresenta un tipo di documento preciso.
-
-La classificazione dei documenti in foto deve esser effettuata attraverso un modelli di intelligenza artificiale, dopo un primo sguardo al dataset i possibili modelli sono :
-- ResNet
-- DenseNet
-- ViT
-- PCE
-
-I modelli verranno testati tutti per vedere quale è il più affidibile
-
-# 2. Pipeline
-
-## 2.1 Pulizia del dataset
-
-Per prima cosa il dataset va pulito. Le best practice sono : 
-- Ridimensionamento delle immagini per avere una grandezza uniforme 
-- Eliminazione di Ombre 
-- Eliminazione di sfondi che non sono informativi riguardo al documento 
-- Riequilibrazione dei canali RGB 
-
-Per i documenti di tipo 2 verrà effettuata un operazione più elaborata, questo tipo di documento rappresenta ben 3 documenti in una sola foto, che possiamo rappresentare come una matrice alta e stretta. (A volte possono esserci più di 3 documenti)
-In questo caso spezzeremo l'immagine alta e stretta in sotto immagini che attraverseranno la pipeline di pulizia singolarmente per poi esser ricomposte in una sola immagine, le singole immagini non potranno avere la dimensione di altre immagini singole quindi verrà fatto un riequilibrio delle dimensioni.
-
-### 2.1.1 Algoritmi 
-- Rilevamento bordi : Canny Edge Detection, Dilation, Probabilistic Hough
-- Rimozione ombre e riflessi : Morphological, Filtering, Illumination Correction
-- Rimozione sfondi non informativi : Contour Detection + Largest area approximation, GrabCut, DeepLbaV3 /U2-Net
--Riequilibrio canali RGB : Histogram equilization, Color constancy
-
-Questa è una lista dei possibili algoritmi che si possono applicare, in fase di sviluppo si indentificherà il più adatto
-
-## 2.2 Modello di riconocimento
-
-Una volta pulito il dataset si passerà al Fine Tuning di uno dei modelli prima citati.
-
-Una volta effettuato il fine tuning si procederà con test di inferenza per verificare l'efficacia del modello
+We used AdamW as optimizer, LambdaLR as warm-up scheduler and CosineAnnealingLR.
 
 ## 3 Strategia di training
 
-La strategia di training sarà effettuata per far si che il modello possa comprendere al meglio la struttura dei documenti.
-
-Dopo aver effettuato la pulizia di tutte le immagini al modello verranno date le foto per fare una classificazione tramite softmax con 
-loss Cross Entropy (CE).
-Per le foto a tre documenti verrà effettuata una strategia che possa massimizzare la generalizzazione : 
-i tre documenti verranno dati spezzati, quindi invece di dare una singola foto con tutti e tre i ducmenti il modello li riceverà all'interno del batch con la stessa etichezza di classificazione, questo dovrebbe permettere al modello di generalizzare al meglio per quei tipi di documenti nello specifico.
+We got a high accuracy in only 50 epochs, then I delivered the model to DiscoLazio and they have load the model on their server
