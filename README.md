@@ -8,7 +8,6 @@ To do this i had implemented a DocDataset class, it take all image from dataset,
 
 Classes in the img_prepoc folder are for image preprocessing. But we aren't using it because in our tests with preprocessed images, we didn't see significant improvement.
 So as preprocessing we are only using resizing and standardization of the images. The resizing is necessary because the network takes 224x224 images as input.
-# DiscoLazio Document classification 
 
 ## Model
 
