@@ -17,6 +17,6 @@ To fine-tune the ResNet we froze all the networks weights except for the linear 
 
 We used AdamW as optimizer, LambdaLR as warm-up scheduler and CosineAnnealingLR.
 
-## 3 Strategia di training
+## Training
 
 We got a high accuracy in only 50 epochs, then I delivered the model to DiscoLazio and they have load the model on their server
