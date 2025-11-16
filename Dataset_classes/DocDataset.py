@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 from img_preproc.CleanerIMG import CleanerIMG
 from img_preproc.FindsLinesIMG import FindsLinesIMG
@@ -22,6 +23,9 @@ class DocumentDatasetTrain(Dataset):
 
         return images, labels
     
+    def __len__(self):
+        return len(self.data)
+    
 class DocumentDatasetVal(Dataset):
     def __init__(self, data, labels):
         super().__init__()
@@ -34,6 +38,9 @@ class DocumentDatasetVal(Dataset):
         labels = self.labels[idx]
 
         return images, labels
+    
+    def __len__(self):
+        return len(self.data)
 
 class DocumentDataset(Dataset):
     def __init__(self, size, blur_kernel, dataset_path = r"\\10.5.1.36\dataset_IA\dataset_pdf_v1", debug=False) -> None:
@@ -88,7 +95,7 @@ class DocumentDataset(Dataset):
         """
         labels_dir = os.path.join(self.dataset_pth, self.label_path)
 
-        for i, json_file in enumerate(os.listdir(labels_dir)):
+        for i, json_file in tqdm(enumerate(os.listdir(labels_dir))):
             json_path = os.path.join(labels_dir, json_file)
             with open(json_path, 'r') as file:
                 data = json.load(file)
@@ -102,7 +109,7 @@ class DocumentDataset(Dataset):
 
             # Insert image in dataset
             if img is not None:
-                if type_set is not 'cleaned':
+                if type_set != 'cleaned':
                     resized_img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_AREA)
                 normalized_img = resized_img.astype(np.float32) / 255.0
                 
@@ -284,11 +291,24 @@ class DocumentDataset(Dataset):
         Returns:
             tuple: (train_dataset, val_dataset) - Instances of DocumentDatasetTrain and DocumentDatasetVal
         """
-        if not self.data or not self.labels:
+        if len(self.data) == 0 or len(self.labels) == 0:
             raise ValueError("Empty dataset! Please run create_dataset() first.")
             
         if abs(train_ratio + val_ratio - 1.0) > 1e-6:
             raise ValueError("train_ratio + val_ratio must equal 1.0")
+
+        # DEBUG: Verifica il tipo delle labels
+        print(f"Type of self.labels: {type(self.labels)}")
+        print(f"Type of self.data: {type(self.data)}")
+        
+        # Assicurati che labels sia un numpy array
+        if not isinstance(self.labels, np.ndarray):
+            print("Converting labels to numpy array...")
+            self.labels = np.array(self.labels, dtype=np.int64)
+        
+        if not isinstance(self.data, np.ndarray):
+            print("Converting data to numpy array...")
+            self.data = np.array(self.data, dtype=np.float32)
 
         # Compute the number of samples
         total_samples = len(self.data)
@@ -303,7 +323,6 @@ class DocumentDataset(Dataset):
         #  Create random indices to shuffle the dataset
         indices = np.random.permutation(total_samples)
         
-
         train_indices = indices[:num_train]
         val_indices = indices[num_train:]
 

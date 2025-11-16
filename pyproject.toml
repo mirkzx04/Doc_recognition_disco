@@ -12,6 +12,5 @@ dependencies = [
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
     "scipy>=1.16.1",
-    "torchvision>=0.22.1",
     "wandb>=0.21.1",
 ]
