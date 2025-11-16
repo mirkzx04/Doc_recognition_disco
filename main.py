@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
-dataset_path = r'\\10.5.1.36\dataset_IA\dataset_pdf_v1'
-
 from Dataset_classes.DocDataset import DocumentDataset
 from Training.LitModule import LitModule
 
