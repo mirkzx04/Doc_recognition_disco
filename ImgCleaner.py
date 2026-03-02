@@ -11,7 +11,7 @@ class DynamicDocumentCleaner:
         :param debug: If True, shows intermediate steps (useful for tuning).
         """
         self.debug = debug
-        # self.session = new_session('isnet-general-use')
+        self.session = new_session('isnet-general-use')
 
     def order_points(self, pts):
         """
@@ -61,7 +61,7 @@ class DynamicDocumentCleaner:
         """
         Use U-2-Net to create a image mask
         """
-        output = remove(image) # remove background
+        output = remove(image, session=self.session) # remove background
         mask = output[:, :, 3]
 
         # Clean the mask

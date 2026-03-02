@@ -7,10 +7,12 @@ requires-python = ">=3.11"
 dependencies = [
     "albumentations>=2.0.8",
     "matplotlib>=3.10.3",
+    "onnxruntime-gpu>=1.24.2",
     "opencv-python>=4.12.0.88",
     "pandas>=2.3.2",
     "pdf2image>=1.17.0",
     "pymupdf>=1.26.7",
+    "rembg>=2.0.69",
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
     "scipy>=1.16.1",

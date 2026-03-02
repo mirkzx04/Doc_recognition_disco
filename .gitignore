@@ -1,3 +1,7 @@
 .venv
 __pycache__
 img_preproc\__pycache__
+Dataset/
+uv.lock
+PDF_Disco/
+clean_imgs/

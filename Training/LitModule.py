@@ -97,24 +97,6 @@ class LitModule(pl.LightningModule):
     def on_validation_epoch_start(self):
         self.val_accuracy.reset()
 
-    def apply_augment(self, images):
-        augmented_images = []
-        batch_size = images.shape[0]
-        
-        for i in range(batch_size):
-            img = images[i].cpu().numpy()
-            if img.shape[0] == 3:
-                img = img.transpose(1, 2, 0)  # Permute from [C, H, W] to [H, W, C]
-            
-            if img.max() <= 1.0:
-                img = (img * 255).astype(np.uint8)
-            
-            augmented = self.train_augment(image=img)
-            augmented_img = augmented['image']
-            augmented_images.append(augmented_img)
-            
-        return torch.stack(augmented_images).to(images.device)
-
     def training_step(self, batch, batch_idx):
         data, labels = batch
         data, labels = data.to(self.device), labels.to(self.device)
@@ -182,58 +164,6 @@ class LitModule(pl.LightningModule):
         self.validation_error.clear()
 
         self.log_dict(log_dict, prog_bar=True, on_epoch=True, on_step=False, logger=True)
-        
-    def log_prediction(self,
-            data, 
-            true_labels,  # Corretto typo: true_labesl → true_labels
-            pred_labels, 
-            num_img_to_log, 
-            phase
-        ):
-
-        # Convert tensors to numpy if needed
-        if isinstance(data, torch.Tensor):
-            data = data.detach().cpu()
-        if isinstance(true_labels, torch.Tensor):  # Corretto nome
-            true_labels = true_labels.detach().cpu()
-        if isinstance(pred_labels, torch.Tensor):
-            pred_labels = pred_labels.detach().cpu()
-
-        if len(pred_labels.shape) > 1:
-            pred_labels = torch.argmax(pred_labels, dim=1)
-
-        # Limit number of image to log
-        num_img_to_log = min(num_img_to_log, data.shape[0])
-        wandb_imgs = []
-
-        for i in range(num_img_to_log):
-            # Get single image and labels
-            img = data[i]
-            true_label = true_labels[i].item()  # CORRETTO: usa .item() per estrarre il valore scalare
-            pred_label = pred_labels[i].item()  # CORRETTO: usa .item() per estrarre il valore scalare
-
-            # Convert image tensor to PIL Image
-            if img.shape[0] == 3:
-                img_pil = ToPILImage()(img)
-            else: 
-                img = img.permute(2, 0, 1)  # Corretto typo: premute → permute
-                img_pil = ToPILImage()(img)
-            
-            # Create caption with true and predicted labels
-            true_class = self.class_names[true_label] if true_label < len(self.class_names) else f'True Classes: {true_label}'
-            pred_class = self.class_names[pred_label] if pred_label < len(self.class_names) else f'Predicted Classes: {pred_label}'
-
-            is_correct = 'YES' if true_label == pred_label else 'NO'
-            caption = f'{is_correct} True: {true_class} | Pred: {pred_class}'
-
-            # Create wandb image object
-            wandb_img = wb.Image(img_pil, caption)
-            wandb_imgs.append(wandb_img)
-        
-        # Log to wandb
-        log_dict = {f'{phase}_predictions': wandb_imgs}  # Corretto nome variabile
-        if hasattr(self.logger, 'experiment'):
-            self.logger.experiment.log(log_dict)  # Corretto modo di loggare
     
     def configure_optimizers(self):
         cosine_epochs = self.total_epochs - self.warmup_epochs
